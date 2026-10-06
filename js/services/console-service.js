@@ -81,9 +81,10 @@ class ConsoleService {
      * Runs a command and provides progress updates through a callback.
      * @param command The command to execute.
        @param killProcessOnFirstConsoleOutput If true, kills the process as soon as the first console output is received.
+     * @param suppressOutput If true, captures output without broadcasting stdout or stderr.
      * @returns A promise that resolves with the exit code of the command.
      */
-    static async runCommandAsync(command, killProcessOnFirstConsoleOutput) {
+    static async runCommandAsync(command, killProcessOnFirstConsoleOutput, suppressOutput = false) {
         return new Promise(resolve => {
             let isExited = false;
             let isAborted = false;
@@ -95,7 +96,7 @@ class ConsoleService {
             ConsoleService._childConsoleProcess = exec(command);
             ConsoleService._childConsoleProcess.stdout.on('data', function (data) {
                 commandOutput += data;
-                const killProcess = _1.BroadcastService.broadcastProgress(common_1.ProgressEventType.stdOutData, 'ConsoleService:runCommand', {
+                const killProcess = suppressOutput ? undefined : _1.BroadcastService.broadcastProgress(common_1.ProgressEventType.stdOutData, 'ConsoleService:runCommand', {
                     data,
                     type: common_1.ProgressEventType.stdOutData,
                 });
@@ -106,7 +107,7 @@ class ConsoleService {
                 }
             });
             ConsoleService._childConsoleProcess.stderr.on('data', function (error) {
-                const killProcess = _1.BroadcastService.broadcastProgress(common_1.ProgressEventType.stdErrData, 'ConsoleService:runCommand', {
+                const killProcess = suppressOutput ? undefined : _1.BroadcastService.broadcastProgress(common_1.ProgressEventType.stdErrData, 'ConsoleService:runCommand', {
                     messageOrKey: error,
                     isError: true,
                     type: common_1.ProgressEventType.stdErrData,

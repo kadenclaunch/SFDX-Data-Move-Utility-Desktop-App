@@ -74,3 +74,7 @@ The initial release of v4.X.X of the application.
 
 ### v3.1.16
 The final release of the v3.X.X series of the application.
+### Unreleased
+**Fixes**
+- Retrieve missing or redacted org access tokens with `org auth show-access-token --json` to support Salesforce CLI credential security updates and prevent `Invalid_Auth_Header` errors. Preserve compatibility with older CLI versions that return tokens from `org display`.
+- Suppress authentication command output in console progress events and omit raw authentication output from connection diagnostics.

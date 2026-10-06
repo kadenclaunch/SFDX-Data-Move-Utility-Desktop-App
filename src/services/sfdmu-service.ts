@@ -31,17 +31,20 @@ export class SfdmuService {
       * @param {string} command - The SFDX command to execute.
       * @param {string} [targetusername] - The target username for the command.
       * @param {boolean} [killProcessOnFirstConsoleOutput=false] - Flag indicating whether to kill the process on the first console output.
-      * @param {LongOperationProgressCallback} [progressCallback=null] - Callback function for progress updates.
+      * @param {boolean} [suppressOutput=false] - Prevents sensitive output from being broadcast to the console.
       * @returns {Promise<IExecSfdxCommandResult>} - A promise that resolves to the execution result.
       */
     static async execSfdxCommandAsync(
         command: string,
         targetusername: string,
-        killProcessOnFirstConsoleOutput = false
+        killProcessOnFirstConsoleOutput = false,
+        suppressOutput = false
     ): Promise<IExecSfdxCommandResult> {
 
+        const targetFlag = command.startsWith("org auth ") || command.startsWith("org:auth:")
+            ? "--target-org" : "--targetusername";
         let cliCommand = targetusername
-            ? `sfdx ${command} --targetusername ${targetusername}`
+            ? `sfdx ${command} ${targetFlag} ${targetusername}`
             : `sfdx ${command}`;
         if (global.appGlobal.packageJson.appConfig.useSfCliCommands) {
             cliCommand = cliCommand.replaceStrings(
@@ -54,7 +57,7 @@ export class SfdmuService {
 
         LogService.info(`Executing the CLI command ${cliCommand}...`);
 
-        const { commandOutput, isError } = await ConsoleService.runCommandAsync(cliCommand, killProcessOnFirstConsoleOutput);
+        const { commandOutput, isError } = await ConsoleService.runCommandAsync(cliCommand, killProcessOnFirstConsoleOutput, suppressOutput);
 
         if (isError) {
             LogService.warn(`Failed to execute the command ${cliCommand}`);
@@ -150,18 +153,44 @@ export class SfdmuService {
             const response = await SfdmuService.execSfdxCommandAsync(
                 "force:org:display --json",
                 userName,
-                false
+                false,
+                true
             );
             const jsonObject = JSON.parse(response.commandOutput) as IForceOrgDisplayResponse;
-            if (jsonObject.status == 0) {
+            if (!response.isError && jsonObject.status == 0) {
+                // Recent CLI versions return a redaction notice instead of a token.
+                // Older sf/sfdx versions still provide the token in org display.
+                let accessToken = jsonObject.result.accessToken;
+                const hasToken = (token: string) => typeof token === "string"
+                    && token.trim().length > 0 && !/redacted/i.test(token);
+                if (!hasToken(accessToken)) {
+                    const tokenResponse = await SfdmuService.execSfdxCommandAsync(
+                        global.appGlobal.packageJson.appConfig.useSfCliCommands
+                            ? "org auth show-access-token --json"
+                            : "org:auth:show-access-token --json",
+                        userName,
+                        false,
+                        true
+                    );
+                    const tokenObject = JSON.parse(tokenResponse.commandOutput) as {
+                        status: number;
+                        result?: { accessToken?: string };
+                    };
+                    accessToken = tokenObject.result?.accessToken;
+                    if (tokenResponse.isError || tokenObject.status !== 0 || !hasToken(accessToken)) {
+                        throw new Error("Unable to retrieve the org access token");
+                    }
+                }
                 /**
                  * The result of the "force:org:display" command.
                  * @type {ForceOrgDisplayResult}
                  */
                 const responseObject = new ForceOrgDisplayResult(
                     Object.assign(jsonObject.result, {
+                        accessToken,
                         cliCommand: response.cliCommand,
-                        commandOutput: response.commandOutput,
+                        // Do not retain raw authentication output in diagnostics.
+                        commandOutput: "",
                         statusCode: StatusCode.OK,
                     })
                 );

@@ -81,9 +81,10 @@ export class ConsoleService {
      * Runs a command and provides progress updates through a callback.
      * @param command The command to execute.
        @param killProcessOnFirstConsoleOutput If true, kills the process as soon as the first console output is received.
+     * @param suppressOutput If true, captures output without broadcasting stdout or stderr.
      * @returns A promise that resolves with the exit code of the command.
      */
-    static async runCommandAsync(command: string, killProcessOnFirstConsoleOutput?: boolean): Promise<{ commandOutput: string, isError: boolean }> {
+    static async runCommandAsync(command: string, killProcessOnFirstConsoleOutput?: boolean, suppressOutput = false): Promise<{ commandOutput: string, isError: boolean }> {
 
         return new Promise(resolve => {
             let isExited = false;
@@ -101,7 +102,7 @@ export class ConsoleService {
 
                 commandOutput += data;
 
-                const killProcess = BroadcastService.broadcastProgress(ProgressEventType.stdOutData, 'ConsoleService:runCommand', {
+                const killProcess = suppressOutput ? undefined : BroadcastService.broadcastProgress(ProgressEventType.stdOutData, 'ConsoleService:runCommand', {
                     data,
                     type: ProgressEventType.stdOutData,
                 });
@@ -114,7 +115,7 @@ export class ConsoleService {
             });
 
             ConsoleService._childConsoleProcess.stderr.on('data', function (error: any) {
-                const killProcess = BroadcastService.broadcastProgress(ProgressEventType.stdErrData, 'ConsoleService:runCommand', {
+                const killProcess = suppressOutput ? undefined : BroadcastService.broadcastProgress(ProgressEventType.stdErrData, 'ConsoleService:runCommand', {
                     messageOrKey: error,
                     isError: true,
                     type: ProgressEventType.stdErrData,

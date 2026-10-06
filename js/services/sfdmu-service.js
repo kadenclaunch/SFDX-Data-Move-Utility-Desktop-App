@@ -19,18 +19,20 @@ class SfdmuService {
       * @param {string} command - The SFDX command to execute.
       * @param {string} [targetusername] - The target username for the command.
       * @param {boolean} [killProcessOnFirstConsoleOutput=false] - Flag indicating whether to kill the process on the first console output.
-      * @param {LongOperationProgressCallback} [progressCallback=null] - Callback function for progress updates.
+      * @param {boolean} [suppressOutput=false] - Prevents sensitive output from being broadcast to the console.
       * @returns {Promise<IExecSfdxCommandResult>} - A promise that resolves to the execution result.
       */
-    static async execSfdxCommandAsync(command, targetusername, killProcessOnFirstConsoleOutput = false) {
+    static async execSfdxCommandAsync(command, targetusername, killProcessOnFirstConsoleOutput = false, suppressOutput = false) {
+        const targetFlag = command.startsWith("org auth ") || command.startsWith("org:auth:")
+            ? "--target-org" : "--targetusername";
         let cliCommand = targetusername
-            ? `sfdx ${command} --targetusername ${targetusername}`
+            ? `sfdx ${command} ${targetFlag} ${targetusername}`
             : `sfdx ${command}`;
         if (global.appGlobal.packageJson.appConfig.useSfCliCommands) {
             cliCommand = cliCommand.replaceStrings({ from: "sfdx", to: "sf" }, { from: "force:org:display", to: "org display" }, { from: "force:org:list", to: "org list" }, { from: "--targetusername", to: "--target-org" });
         }
         _1.LogService.info(`Executing the CLI command ${cliCommand}...`);
-        const { commandOutput, isError } = await _1.ConsoleService.runCommandAsync(cliCommand, killProcessOnFirstConsoleOutput);
+        const { commandOutput, isError } = await _1.ConsoleService.runCommandAsync(cliCommand, killProcessOnFirstConsoleOutput, suppressOutput);
         if (isError) {
             _1.LogService.warn(`Failed to execute the command ${cliCommand}`);
         }
@@ -101,19 +103,37 @@ class SfdmuService {
     * @returns {Promise<ForceOrgDisplayResult>} - A promise that resolves to the execution result.
     */
     static async execForceOrgDisplayAsync(userName) {
+        var _a;
         try {
             _1.BroadcastService.broascastProgressUserMessage(common_1.ProgressEventType.ui_notification, 'SfdmuService:execForceOrgDisplay', `CONNECTING_ORG`, userName);
             _1.LogService.info(`Connecting the org ${userName}...`);
-            const response = await SfdmuService.execSfdxCommandAsync("force:org:display --json", userName, false);
+            const response = await SfdmuService.execSfdxCommandAsync("force:org:display --json", userName, false, true);
             const jsonObject = JSON.parse(response.commandOutput);
-            if (jsonObject.status == 0) {
+            if (!response.isError && jsonObject.status == 0) {
+                // Recent CLI versions return a redaction notice instead of a token.
+                // Older sf/sfdx versions still provide the token in org display.
+                let accessToken = jsonObject.result.accessToken;
+                const hasToken = (token) => typeof token === "string"
+                    && token.trim().length > 0 && !/redacted/i.test(token);
+                if (!hasToken(accessToken)) {
+                    const tokenResponse = await SfdmuService.execSfdxCommandAsync(global.appGlobal.packageJson.appConfig.useSfCliCommands
+                        ? "org auth show-access-token --json"
+                        : "org:auth:show-access-token --json", userName, false, true);
+                    const tokenObject = JSON.parse(tokenResponse.commandOutput);
+                    accessToken = (_a = tokenObject.result) === null || _a === void 0 ? void 0 : _a.accessToken;
+                    if (tokenResponse.isError || tokenObject.status !== 0 || !hasToken(accessToken)) {
+                        throw new Error("Unable to retrieve the org access token");
+                    }
+                }
                 /**
                  * The result of the "force:org:display" command.
                  * @type {ForceOrgDisplayResult}
                  */
                 const responseObject = new models_1.ForceOrgDisplayResult(Object.assign(jsonObject.result, {
+                    accessToken,
                     cliCommand: response.cliCommand,
-                    commandOutput: response.commandOutput,
+                    // Do not retain raw authentication output in diagnostics.
+                    commandOutput: "",
                     statusCode: models_1.StatusCode.OK,
                 }));
                 return responseObject;
